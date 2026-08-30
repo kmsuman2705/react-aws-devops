@@ -74,7 +74,7 @@ jobs:
           docker push \
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
-      # 8. Deploy image to EC2 using SSM
+      # 8. Deploy to EC2 using SSM
       - name: Deploy to EC2 using SSM
         run: |
 
@@ -86,8 +86,9 @@ jobs:
               "docker pull 840986437653.dkr.ecr.ap-south-1.amazonaws.com/react-devops:latest",
               "docker rm -f react-app || true",
               "docker run -d --name react-app -p 8080:80 840986437653.dkr.ecr.ap-south-1.amazonaws.com/react-devops:latest",
+              "sleep 5",
               "docker ps",
-              "curl -f http://127.0.0.1:8080 || exit 1"
+              "HTTP_CODE=$(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8080); if [ \"$HTTP_CODE\" != \"200\" ]; then echo \"Health check failed. HTTP status: $HTTP_CODE\"; docker logs react-app; exit 1; fi; echo \"Health check passed. HTTP status: $HTTP_CODE\""
             ]' \
             --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
@@ -95,7 +96,7 @@ jobs:
 
           echo "SSM Command ID: $COMMAND_ID"
 
-          # Wait until deployment command completes
+          # Wait for deployment to complete
           aws ssm wait command-executed \
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
@@ -106,3 +107,18 @@ jobs:
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
             --region "${{ env.AWS_REGION }}"
+
+          # Check SSM command status
+          STATUS=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --region "${{ env.AWS_REGION }}" \
+            --query 'Status' \
+            --output text)
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "Deployment failed with status: $STATUS"
+            exit 1
+          fi
+
+          echo "Deployment and health check successful!"
