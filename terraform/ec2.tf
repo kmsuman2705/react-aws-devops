@@ -14,49 +14,73 @@ resource "aws_instance" "web" {
   user_data_replace_on_change = true
 
   user_data = <<-EOF
-    #!/bin/bash
+#!/bin/bash
 
-    # Send user-data output to log
-    exec > /var/log/user-data.log 2>&1
+exec > /var/log/user-data.log 2>&1
 
-    # Exit on errors, undefined variables, and failed pipes
-    set -euxo pipefail
+echo "=== USER DATA START ==="
 
-    echo "=== USER DATA STARTED ==="
+# Update package index
+apt-get update -y
 
-    # Update package index
-    apt-get update -y
+# Install Docker and Nginx
+apt-get install -y docker.io nginx
 
-    # Install Docker and Nginx
-    apt-get install -y docker.io nginx
+echo "Docker and Nginx installed"
 
-    # Enable and start Docker
-    systemctl enable docker
-    systemctl start docker
+# Start Docker
+systemctl enable docker
+systemctl start docker
 
-    # Enable and start Nginx
-    systemctl enable nginx
-    systemctl start nginx
+# Add ubuntu user to Docker group
+usermod -aG docker ubuntu
 
-    # Add ubuntu user to Docker group
-    usermod -aG docker ubuntu
+# Configure Nginx
+cat > /etc/nginx/sites-available/default <<'NGINX'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
 
-    # Install Amazon SSM Agent
-    snap install amazon-ssm-agent --classic
+    server_name _;
 
-    # Enable and start SSM Agent
-    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-    systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+    location / {
+        proxy_pass http://127.0.0.1:8080;
 
-    # Verify services
-    systemctl is-active --quiet docker
-    systemctl is-active --quiet nginx
-    systemctl is-active --quiet snap.amazon-ssm-agent.amazon-ssm-agent.service
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+NGINX
 
-    echo "USER_DATA_COMPLETED" > /tmp/user-data-completed
+# Test Nginx configuration
+nginx -t
 
-    echo "=== USER DATA FINISHED ==="
-  EOF
+# Start Nginx
+systemctl enable nginx
+systemctl restart nginx
+
+# Verify installation
+echo "=== DOCKER VERSION ==="
+docker --version
+
+echo "=== NGINX VERSION ==="
+nginx -v
+
+echo "=== DOCKER STATUS ==="
+systemctl is-active docker
+
+echo "=== NGINX STATUS ==="
+systemctl is-active nginx
+
+echo "=== SSM STATUS ==="
+systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+
+echo "USER_DATA_COMPLETED" > /tmp/user-data-completed
+
+echo "=== USER DATA FINISHED ==="
+EOF
 
   tags = {
     Name = "react-devops-web"
