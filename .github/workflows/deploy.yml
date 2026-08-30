@@ -212,7 +212,7 @@ jobs:
 
           echo "HTTP status: \$HTTP_CODE"
 
-          if [ "\$HTTP_CODE" != "999" ]; then
+          if [ "\$HTTP_CODE" != "200" ]; then
 
             echo "======================================"
             echo "HEALTH CHECK FAILED"
