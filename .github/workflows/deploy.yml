@@ -49,32 +49,39 @@ jobs:
 
           echo "EC2 Instance ID: $EC2_ID"
 
-      # 4. Login to Amazon ECR
+      # 4. Test / Code Quality Check
+      - name: Test application
+        run: |
+          cd app
+          npm ci
+          npm run lint
+
+      # 5. Login to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 5. Build Docker image
+      # 6. Build Docker image
       - name: Build Docker image
         run: |
           docker build \
             -t ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
             ./app
 
-      # 6. Tag Docker image
+      # 7. Tag Docker image
       - name: Tag Docker image
         run: |
           docker tag \
             ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
-      # 7. Push Docker image to ECR
+      # 8. Push Docker image to ECR
       - name: Push Docker image to ECR
         run: |
           docker push \
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
-      # 8. Deploy to EC2 using SSM
+      # 9. Deploy to EC2 using SSM
       - name: Deploy to EC2 using SSM
         run: |
 
