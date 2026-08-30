@@ -12,7 +12,6 @@ permissions:
 env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: react-devops
-  IMAGE_TAG: latest
 
 jobs:
   build-and-deploy:
@@ -61,42 +60,44 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 6. Build Docker image
+      # 6. Build Docker image using Git commit SHA
       - name: Build Docker image
         run: |
           docker build \
-            -t ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
+            -t ${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
             ./app
 
       # 7. Tag Docker image
       - name: Tag Docker image
         run: |
           docker tag \
-            ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            ${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
 
       # 8. Push Docker image to ECR
       - name: Push Docker image to ECR
         run: |
           docker push \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
 
       # 9. Deploy to EC2 using SSM
       - name: Deploy to EC2 using SSM
         run: |
 
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$EC2_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=[
-              "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 840986437653.dkr.ecr.ap-south-1.amazonaws.com",
-              "docker pull 840986437653.dkr.ecr.ap-south-1.amazonaws.com/react-devops:latest",
-              "docker rm -f react-app || true",
-              "docker run -d --name react-app -p 8080:80 840986437653.dkr.ecr.ap-south-1.amazonaws.com/react-devops:latest",
-              "sleep 5",
-              "docker ps",
-              "HTTP_CODE=$(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8080); if [ \"$HTTP_CODE\" != \"200\" ]; then echo \"Health check failed. HTTP status: $HTTP_CODE\"; docker logs react-app; exit 1; fi; echo \"Health check passed. HTTP status: $HTTP_CODE\""
-            ]' \
+            --parameters "commands=[
+              \"aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 840986437653.dkr.ecr.ap-south-1.amazonaws.com\",
+              \"docker pull $IMAGE_URI\",
+              \"docker rm -f react-app || true\",
+              \"docker run -d --name react-app -p 8080:80 $IMAGE_URI\",
+              \"sleep 5\",
+              \"docker ps\",
+              \"HTTP_CODE=\\\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080); if [ \\\"\\\$HTTP_CODE\\\" != \\\"200\\\" ]; then echo \\\"Health check failed. HTTP status: \\\$HTTP_CODE\\\"; docker logs react-app; exit 1; fi; echo \\\"Health check passed. HTTP status: \\\$HTTP_CODE\\\"\"
+            ]" \
             --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
             --output text)
@@ -129,3 +130,4 @@ jobs:
           fi
 
           echo "Deployment and health check successful!"
+          echo "Deployed image: $IMAGE_URI"
