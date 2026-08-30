@@ -9,34 +9,53 @@ resource "aws_instance" "web" {
   vpc_security_group_ids      = [aws_security_group.web.id]
   associate_public_ip_address = true
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
+  key_name                    = aws_key_pair.react_devops.key_name
 
   user_data_replace_on_change = true
 
   user_data = <<-EOF
     #!/bin/bash
 
-    set -e
+    # Send user-data output to log
+    exec > /var/log/user-data.log 2>&1
 
-    # Update packages
+    # Exit on errors, undefined variables, and failed pipes
+    set -euxo pipefail
+
+    echo "=== USER DATA STARTED ==="
+
+    # Update package index
     apt-get update -y
 
-    # Install Docker
-    apt-get install -y docker.io
+    # Install Docker and Nginx
+    apt-get install -y docker.io nginx
 
     # Enable and start Docker
     systemctl enable docker
     systemctl start docker
 
-    # Add ubuntu user to docker group
+    # Enable and start Nginx
+    systemctl enable nginx
+    systemctl start nginx
+
+    # Add ubuntu user to Docker group
     usermod -aG docker ubuntu
 
-    # Install SSM Agent
+    # Install Amazon SSM Agent
     snap install amazon-ssm-agent --classic
 
     # Enable and start SSM Agent
     systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
     systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 
+    # Verify services
+    systemctl is-active --quiet docker
+    systemctl is-active --quiet nginx
+    systemctl is-active --quiet snap.amazon-ssm-agent.amazon-ssm-agent.service
+
+    echo "USER_DATA_COMPLETED" > /tmp/user-data-completed
+
+    echo "=== USER DATA FINISHED ==="
   EOF
 
   tags = {

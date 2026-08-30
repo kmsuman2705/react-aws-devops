@@ -23,9 +23,17 @@ resource "aws_iam_role" "ec2_role" {
 }
 
 
+# SSM access for EC2
 resource "aws_iam_role_policy_attachment" "ssm" {
   role       = aws_iam_role.ec2_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+
+# ECR pull access for EC2
+resource "aws_iam_role_policy_attachment" "ecr_readonly" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
 
