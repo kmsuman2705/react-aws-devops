@@ -130,6 +130,7 @@ jobs:
 
           if [ -n "\$CURRENT_IMAGE" ]; then
             echo "\$CURRENT_IMAGE" > /opt/react-app/previous-image
+
             echo "Previous image:"
             echo "\$CURRENT_IMAGE"
           else
@@ -287,9 +288,10 @@ jobs:
 
             echo "======================================"
             echo "ROLLBACK SUCCESSFUL"
+            echo "======================================"
+
             echo "Previous version restored:"
             echo "\$PREVIOUS_IMAGE"
-            echo "======================================"
 
             exit 40
           fi
@@ -299,12 +301,14 @@ jobs:
           echo "======================================"
 
           echo "Deployment successful"
+
           echo "Running image:"
           docker inspect "\$CONTAINER" --format '{{.Config.Image}}'
 
           echo "======================================"
           echo "DEPLOYMENT SUCCESSFUL"
           echo "======================================"
+
           EOF
 
           chmod +x /tmp/deploy.sh
@@ -339,8 +343,6 @@ jobs:
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
             --region "$AWS_REGION"
-
-          WAIT_STATUS=$?
 
           set -e
 
