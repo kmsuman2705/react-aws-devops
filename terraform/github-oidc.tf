@@ -1,4 +1,3 @@
-# GitHub Actions OIDC Provider
 resource "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
 
@@ -11,8 +10,6 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-
-# IAM Role for GitHub Actions
 resource "aws_iam_role" "github_actions" {
   name = "react-devops-github-actions-role"
 
@@ -35,20 +32,14 @@ resource "aws_iam_role" "github_actions" {
           }
 
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:kmsuman2705/react-aws-devops:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:sub" = "repo:kmsuman2705@90380803/react-aws-devops@1351028321:ref:refs/heads/main"
           }
         }
       }
     ]
   })
-
-  tags = {
-    Name = "react-devops-github-actions-role"
-  }
 }
 
-
-# ECR permissions for GitHub Actions
 resource "aws_iam_role_policy" "github_ecr" {
   name = "react-devops-github-ecr-policy"
   role = aws_iam_role.github_actions.id
@@ -58,6 +49,7 @@ resource "aws_iam_role_policy" "github_ecr" {
 
     Statement = [
       {
+        Sid    = "ECRLogin"
         Effect = "Allow"
 
         Action = [
@@ -66,7 +58,9 @@ resource "aws_iam_role_policy" "github_ecr" {
 
         Resource = "*"
       },
+
       {
+        Sid    = "ECRPush"
         Effect = "Allow"
 
         Action = [
@@ -78,14 +72,20 @@ resource "aws_iam_role_policy" "github_ecr" {
           "ecr:BatchGetImage"
         ]
 
-        Resource = aws_ecr_repository.react_app.arn
+        Resource = "arn:aws:ecr:ap-south-1:840986437653:repository/react-devops"
+      },
+
+      {
+        Sid    = "SSMDeploy"
+        Effect = "Allow"
+
+        Action = [
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation"
+        ]
+
+        Resource = "*"
       }
     ]
   })
-}
-
-
-# Output IAM Role ARN
-output "github_actions_role_arn" {
-  value = aws_iam_role.github_actions.arn
 }
