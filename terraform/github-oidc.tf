@@ -32,7 +32,7 @@ resource "aws_iam_role" "github_actions" {
           }
 
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:kmsuman2705/react-aws-devops:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:sub" = "repo:kmsuman2705@90380803/react-aws-devops@1351028321:ref:refs/heads/main"
           }
         }
       }
