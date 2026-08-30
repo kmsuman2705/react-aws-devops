@@ -12,6 +12,7 @@ permissions:
 env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: react-devops
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   build-and-deploy:
@@ -48,7 +49,7 @@ jobs:
 
           echo "EC2 Instance ID: $EC2_ID"
 
-      # 4. Test / Code Quality Check
+      # 4. Test / Code Quality
       - name: Test application
         run: |
           cd app
@@ -60,31 +61,31 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 6. Build Docker image using Git commit SHA
+      # 6. Build Docker image
       - name: Build Docker image
         run: |
           docker build \
-            -t ${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
+            -t ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
             ./app
 
       # 7. Tag Docker image
       - name: Tag Docker image
         run: |
           docker tag \
-            ${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
       # 8. Push Docker image to ECR
       - name: Push Docker image to ECR
         run: |
           docker push \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
       # 9. Deploy to EC2 using SSM
       - name: Deploy to EC2 using SSM
         run: |
 
-          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          IMAGE_URI="840986437653.dkr.ecr.ap-south-1.amazonaws.com/react-devops:${{ env.IMAGE_TAG }}"
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$EC2_INSTANCE_ID" \
@@ -92,11 +93,14 @@ jobs:
             --parameters "commands=[
               \"aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 840986437653.dkr.ecr.ap-south-1.amazonaws.com\",
               \"docker pull $IMAGE_URI\",
-              \"docker rm -f react-app || true\",
+              \"docker rm -f react-app-previous || true\",
+              \"if docker ps -q --filter name=^react-app$ | grep -q .; then docker rename react-app react-app-previous; fi\",
               \"docker run -d --name react-app -p 8080:80 $IMAGE_URI\",
               \"sleep 5\",
+              \"if curl -fsS http://127.0.0.1:8080 > /dev/null; then echo 'Health check passed'; else echo 'Health check failed'; docker logs react-app; docker rm -f react-app || true; if docker ps -a --format '{{.Names}}' | grep -qx 'react-app-previous'; then docker rename react-app-previous react-app; fi; exit 1; fi\",
+              \"docker rm -f react-app-previous || true\",
               \"docker ps\",
-              \"HTTP_CODE=\\\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080); if [ \\\"\\\$HTTP_CODE\\\" != \\\"200\\\" ]; then echo \\\"Health check failed. HTTP status: \\\$HTTP_CODE\\\"; docker logs react-app; exit 1; fi; echo \\\"Health check passed. HTTP status: \\\$HTTP_CODE\\\"\"
+              \"echo 'Deployment and health check successful!'\"
             ]" \
             --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
@@ -104,19 +108,19 @@ jobs:
 
           echo "SSM Command ID: $COMMAND_ID"
 
-          # Wait for deployment to complete
+          # Wait for SSM command
           aws ssm wait command-executed \
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
             --region "${{ env.AWS_REGION }}"
 
-          # Get deployment result
+          # Show SSM output
           aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
             --region "${{ env.AWS_REGION }}"
 
-          # Check SSM command status
+          # Check deployment status
           STATUS=$(aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
@@ -129,5 +133,4 @@ jobs:
             exit 1
           fi
 
-          echo "Deployment and health check successful!"
-          echo "Deployed image: $IMAGE_URI"
+          echo "Deployment completed successfully!"
