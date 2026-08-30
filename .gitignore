@@ -13,3 +13,17 @@ crash.*.log
 .env
 .env.*
 !.env.example
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Environment / secrets
+.env
+.env.*
+
+# Node
+node_modules/
+dist/
