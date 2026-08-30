@@ -3,7 +3,7 @@ function App() {
     <div>
       <h1>React DevOps Assessment</h1>
 
-      <p>Application suman deployed successfully 🚀</p>
+      <p>Application suman  kumar deployed successfully 🚀</p>
 
       <p>Environment: Production</p>
 
