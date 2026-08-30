@@ -25,56 +25,6 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: role-to-assume: arn:aws:iam::840986437653:role/react-devops-github-actions-role
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build Docker image
-        run: |
-          docker build \
-            -t ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
-            ./app
-
-      - name: Tag Docker image
-        run: |
-          docker tag \
-            ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-
-      - name: Push Docker image to ECR
-        run: |
-          docker push \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-name: Build and Deploy React App
-
-on:
-  push:
-    branches:
-      - main
-
-permissions:
-  id-token: write
-  contents: read
-
-env:
-  AWS_REGION: ap-south-1
-  ECR_REPOSITORY: react-devops
-  IMAGE_TAG: latest
-
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
           role-to-assume: arn:aws:iam::840986437653:role/react-devops-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
 
