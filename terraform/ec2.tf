@@ -14,29 +14,37 @@ resource "aws_instance" "web" {
   user_data_replace_on_change = true
 
   user_data = <<-EOF
-#!/bin/bash
+    #!/bin/bash
 
-exec > /var/log/user-data.log 2>&1
+    exec > /var/log/user-data.log 2>&1
+    set -euxo pipefail
 
-echo "=== USER DATA START ==="
+    echo "=== USER DATA STARTED ==="
 
-# Update package index
-apt-get update -y
+    apt-get update -y
 
-# Install Docker and Nginx
-apt-get install -y docker.io nginx
+    # Docker + Nginx + required packages
+    apt-get install -y docker.io nginx curl unzip
 
-echo "Docker and Nginx installed"
+    # Docker
+    systemctl enable docker
+    systemctl start docker
 
-# Start Docker
-systemctl enable docker
-systemctl start docker
+    # Ubuntu user -> Docker group
+    usermod -aG docker ubuntu
 
-# Add ubuntu user to Docker group
-usermod -aG docker ubuntu
+    # AWS CLI v2
+    curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip \
+      -o /tmp/awscliv2.zip
 
-# Configure Nginx
-cat > /etc/nginx/sites-available/default <<'NGINX'
+    unzip -q /tmp/awscliv2.zip -d /tmp
+
+    /tmp/aws/install
+
+    /usr/local/bin/aws --version
+
+    # Nginx reverse proxy
+    cat > /etc/nginx/sites-available/default <<'NGINX'
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -54,33 +62,30 @@ server {
 }
 NGINX
 
-# Test Nginx configuration
-nginx -t
+    nginx -t
 
-# Start Nginx
-systemctl enable nginx
-systemctl restart nginx
+    systemctl enable nginx
+    systemctl restart nginx
 
-# Verify installation
-echo "=== DOCKER VERSION ==="
-docker --version
+    # SSM Agent
+    snap install amazon-ssm-agent --classic || true
 
-echo "=== NGINX VERSION ==="
-nginx -v
+    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+    systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 
-echo "=== DOCKER STATUS ==="
-systemctl is-active docker
+    # Verification
+    docker --version
+    nginx -v
+    /usr/local/bin/aws --version
 
-echo "=== NGINX STATUS ==="
-systemctl is-active nginx
+    systemctl is-active --quiet docker
+    systemctl is-active --quiet nginx
+    systemctl is-active --quiet snap.amazon-ssm-agent.amazon-ssm-agent.service
 
-echo "=== SSM STATUS ==="
-systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+    echo "USER_DATA_COMPLETED" > /tmp/user-data-completed
 
-echo "USER_DATA_COMPLETED" > /tmp/user-data-completed
-
-echo "=== USER DATA FINISHED ==="
-EOF
+    echo "=== USER DATA FINISHED ==="
+  EOF
 
   tags = {
     Name = "react-devops-web"
