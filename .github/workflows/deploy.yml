@@ -11,8 +11,11 @@ permissions:
 
 env:
   AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: "840986437653"
   ECR_REPOSITORY: react-devops
-  IMAGE_TAG: ${{ github.sha }}
+  EC2_NAME: react-devops-web
+  APP_CONTAINER: react-app
+  APP_PORT: "8080"
 
 jobs:
   build-and-deploy:
@@ -31,12 +34,13 @@ jobs:
           role-to-assume: arn:aws:iam::840986437653:role/react-devops-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3. Find running EC2
+      # 3. Find running EC2 instance
       - name: Get EC2 Instance ID
         run: |
           EC2_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=react-devops-web" \
-                      "Name=instance-state-name,Values=running" \
+            --filters \
+              "Name=tag:Name,Values=${{ env.EC2_NAME }}" \
+              "Name=instance-state-name,Values=running" \
             --query 'Reservations[0].Instances[0].InstanceId' \
             --output text)
 
@@ -49,83 +53,104 @@ jobs:
 
           echo "EC2 Instance ID: $EC2_ID"
 
-      # 4. Application lint/test
+      # 4. Test / Lint
       - name: Test application
         run: |
           cd app
           npm ci
           npm run lint
 
-      # 5. Login to ECR
+      # 5. Login to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 6. Build Docker image
+      # 6. Set image tag using Git commit SHA
+      - name: Set Docker image
+        run: |
+          IMAGE_TAG="${GITHUB_SHA}"
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+          echo "Image tag: $IMAGE_TAG"
+
+      # 7. Build Docker image
       - name: Build Docker image
         run: |
           docker build \
-            -t ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
+            -t "${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}" \
             ./app
 
-      # 7. Tag Docker image
+      # 8. Tag Docker image
       - name: Tag Docker image
         run: |
           docker tag \
-            ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            "${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}" \
+            "${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}"
 
-      # 8. Push image to ECR
+      # 9. Push Docker image to ECR
       - name: Push Docker image to ECR
         run: |
           docker push \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            "${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}"
 
-      # 9. Deploy using SSM
+      # 10. Deploy to EC2
       - name: Deploy to EC2 using SSM
         run: |
 
-          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+          ECR_REGISTRY="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          IMAGE_URI="${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG}"
 
-          echo "New Image: $IMAGE_URI"
+          echo "Deploying image:"
+          echo "$IMAGE_URI"
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$EC2_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --parameters "commands=[
               \"set -e\",
-              \"IMAGE_URI='$IMAGE_URI'\",
-              \"echo '=== Checking Docker ==='\",
-              \"docker --version\",
-              \"echo '=== Checking AWS CLI ==='\",
-              \"/usr/local/bin/aws --version\",
-              \"echo '=== Checking Docker Service ==='\",
-              \"systemctl is-active docker\",
-              \"echo '=== Logging into ECR ==='\",
-              \"/usr/local/bin/aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 840986437653.dkr.ecr.ap-south-1.amazonaws.com\",
-              \"echo '=== Pulling New Image ==='\",
-              \"docker pull \$IMAGE_URI\",
-              \"echo '=== Saving Current Image for Rollback ==='\",
-              \"OLD_IMAGE=\$(docker inspect react-app --format '{{.Config.Image}}' 2>/dev/null || true)\",
-              \"echo OLD_IMAGE=\$OLD_IMAGE\",
-              \"echo '=== Checking Port 8080 ==='\",
-              \"docker rm -f react-app 2>/dev/null || true\",
-              \"sleep 2\",
-              \"if ss -lntp | grep -q ':8080 '; then echo 'ERROR: Port 8080 is still in use'; ss -lntp | grep ':8080 '; exit 1; fi\",
-              \"echo '=== Starting New Container ==='\",
-              \"docker run -d --name react-app -p 8080:80 \$IMAGE_URI\",
-              \"echo '=== Waiting for Container ==='\",
-              \"sleep 5\",
-              \"docker ps\",
-              \"echo '=== Checking Docker Health ==='\",
-              \"HEALTH=\$(docker inspect react-app --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}')\",
-              \"echo Docker Health: \$HEALTH\",
-              \"if [ \\"\$HEALTH\\" = 'unhealthy' ]; then echo 'Health check failed'; docker logs react-app; exit 1; fi\",
-              \"echo '=== HTTP Health Check ==='\",
-              \"HTTP_CODE=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:8080 || true)\",
-              \"echo HTTP Status: \$HTTP_CODE\",
-              \"if [ \\"\$HTTP_CODE\\" != '200' ]; then echo 'HTTP health check failed'; docker logs react-app; exit 1; fi\",
-              \"echo '=== NEW DEPLOYMENT SUCCESSFUL ==='\"
+              \"echo '=== Deployment started ==='\",
+              \"echo 'New image: ${IMAGE_URI}'\",
+
+              \"mkdir -p /opt/react-app\",
+
+              \"echo '=== Saving current running image ==='\",
+              \"CURRENT_IMAGE=\\$(docker inspect ${{ env.APP_CONTAINER }} --format '{{.Config.Image}}' 2>/dev/null || true)\",
+              \"if [ -n \\\"\\$CURRENT_IMAGE\\\" ]; then echo \\\"\\$CURRENT_IMAGE\\\" > /opt/react-app/previous-image; echo \\\"Previous image: \\$CURRENT_IMAGE\\\"; else echo 'No previous container found'; fi\",
+
+              \"echo '=== Login to ECR ==='\",
+              \"aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}\",
+
+              \"echo '=== Pulling new image ==='\",
+              \"docker pull ${IMAGE_URI}\",
+
+              \"echo '=== Removing old container ==='\",
+              \"docker rm -f ${{ env.APP_CONTAINER }} 2>/dev/null || true\",
+
+              \"echo '=== Cleaning unused container ==='\",
+              \"docker container prune -f\",
+
+              \"echo '=== Checking port ${APP_PORT} ==='\",
+              \"if ss -lnt | grep -q ':${APP_PORT} '; then echo 'ERROR: Port ${APP_PORT} is already in use'; ss -lntp | grep ':${APP_PORT} ' || true; exit 1; fi\",
+
+              \"echo '=== Starting new container ==='\",
+              \"docker run -d --name ${{ env.APP_CONTAINER }} -p ${APP_PORT}:80 ${IMAGE_URI}\",
+
+              \"echo '=== Waiting for application ==='\",
+              \"sleep 8\",
+
+              \"echo '=== Container status ==='\",
+              \"docker ps -a --filter name=${{ env.APP_CONTAINER }}\",
+
+              \"echo '=== Health check ==='\",
+              \"HTTP_CODE=\\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${APP_PORT} || true)\",
+              \"echo \\\"HTTP status: \\$HTTP_CODE\\\"\",
+
+              \"if [ \\\"\\$HTTP_CODE\\\" != '200' ]; then echo '=== HEALTH CHECK FAILED ==='; docker logs ${{ env.APP_CONTAINER }} || true; exit 10; fi\",
+
+              \"echo '=== Health check passed ==='\",
+
+              \"echo '=== Deployment successful ==='\"
             ]" \
             --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
@@ -133,101 +158,97 @@ jobs:
 
           echo "SSM Command ID: $COMMAND_ID"
 
-          set +e
-
-          aws ssm wait command-executed \
+          # Wait for deployment command
+          if aws ssm wait command-executed \
             --command-id "$COMMAND_ID" \
             --instance-id "$EC2_INSTANCE_ID" \
-            --region "${{ env.AWS_REGION }}"
+            --region "${{ env.AWS_REGION }}"; then
 
-          WAIT_STATUS=$?
+            echo "Deployment command completed successfully."
 
-          echo "Wait status: $WAIT_STATUS"
+          else
 
-          aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID" \
-            --region "${{ env.AWS_REGION }}"
-
-          STATUS=$(aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Status' \
-            --output text)
-
-          echo "Deployment status: $STATUS"
-
-          set -e
-
-          if [ "$STATUS" != "Success" ]; then
-            echo "======================================"
-            echo "NEW DEPLOYMENT FAILED"
+            echo "Deployment command failed."
             echo "Starting rollback..."
-            echo "======================================"
 
-            ROLLBACK_COMMAND=$(aws ssm send-command \
+            ROLLBACK_COMMAND_ID=$(aws ssm send-command \
               --instance-ids "$EC2_INSTANCE_ID" \
               --document-name "AWS-RunShellScript" \
               --parameters 'commands=[
                 "set -e",
-                "echo === Current Container ===",
-                "docker ps -a",
-                "echo === Finding Previous Image ===",
-                "OLD_IMAGE=$(docker image ls --format \"{{.Repository}}:{{.Tag}}\" | grep \"react-devops\" | grep -v \"<none>\" | head -2 | tail -1 || true)",
-                "echo OLD_IMAGE=$OLD_IMAGE",
+                "echo \"=== ROLLBACK STARTED ===\"",
+
+                "if [ ! -f /opt/react-app/previous-image ]; then echo \"ERROR: Previous image not found\"; exit 1; fi",
+
+                "PREVIOUS_IMAGE=$(cat /opt/react-app/previous-image)",
+                "echo \"Previous image: $PREVIOUS_IMAGE\"",
+
+                "ECR_REGISTRY=\"840986437653.dkr.ecr.ap-south-1.amazonaws.com\"",
+
+                "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY",
+
+                "docker pull $PREVIOUS_IMAGE",
+
                 "docker rm -f react-app 2>/dev/null || true",
-                "sleep 2",
-                "if [ -z \"$OLD_IMAGE\" ]; then echo \"ERROR: Previous image not found\"; exit 1; fi",
-                "echo === Starting Previous Version ===",
-                "docker run -d --name react-app -p 8080:80 \"$OLD_IMAGE\"",
-                "sleep 5",
-                "docker ps",
-                "echo === Rollback Health Check ===",
-                "HTTP_CODE=$(curl -s -o /dev/null -w \"%{http_code}\" --max-time 10 http://127.0.0.1:8080 || true)",
-                "echo HTTP Status=$HTTP_CODE",
-                "if [ \"$HTTP_CODE\" != \"200\" ]; then echo \"ROLLBACK FAILED\"; docker logs react-app; exit 1; fi",
-                "echo === ROLLBACK SUCCESSFUL ==="
+
+                "docker container prune -f",
+
+                "if ss -lnt | grep -q \":8080 \"; then echo \"ERROR: Port 8080 still in use during rollback\"; ss -lntp | grep \":8080 \" || true; exit 1; fi",
+
+                "docker run -d --name react-app -p 8080:80 $PREVIOUS_IMAGE",
+
+                "sleep 8",
+
+                "docker ps -a --filter name=react-app",
+
+                "HTTP_CODE=$(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8080 || true)",
+
+                "echo \"Rollback HTTP status: $HTTP_CODE\"",
+
+                "if [ \"$HTTP_CODE\" != \"200\" ]; then echo \"ROLLBACK HEALTH CHECK FAILED\"; docker logs react-app || true; exit 1; fi",
+
+                "echo \"=== ROLLBACK SUCCESSFUL ===\""
               ]' \
               --region "${{ env.AWS_REGION }}" \
               --query 'Command.CommandId' \
               --output text)
 
-            echo "Rollback Command ID: $ROLLBACK_COMMAND"
+            echo "Rollback Command ID: $ROLLBACK_COMMAND_ID"
 
-            set +e
-
-            aws ssm wait command-executed \
-              --command-id "$ROLLBACK_COMMAND" \
+            if aws ssm wait command-executed \
+              --command-id "$ROLLBACK_COMMAND_ID" \
               --instance-id "$EC2_INSTANCE_ID" \
-              --region "${{ env.AWS_REGION }}"
+              --region "${{ env.AWS_REGION }}"; then
 
-            aws ssm get-command-invocation \
-              --command-id "$ROLLBACK_COMMAND" \
-              --instance-id "$EC2_INSTANCE_ID" \
-              --region "${{ env.AWS_REGION }}"
+              echo "Rollback completed successfully."
 
-            ROLLBACK_STATUS=$(aws ssm get-command-invocation \
-              --command-id "$ROLLBACK_COMMAND" \
-              --instance-id "$EC2_INSTANCE_ID" \
-              --region "${{ env.AWS_REGION }}" \
-              --query 'Status' \
-              --output text)
+              aws ssm get-command-invocation \
+                --command-id "$ROLLBACK_COMMAND_ID" \
+                --instance-id "$EC2_INSTANCE_ID" \
+                --region "${{ env.AWS_REGION }}"
 
-            set -e
+            else
 
-            if [ "$ROLLBACK_STATUS" != "Success" ]; then
-              echo "ROLLBACK FAILED"
+              echo "CRITICAL: Rollback also failed."
+
+              aws ssm get-command-invocation \
+                --command-id "$ROLLBACK_COMMAND_ID" \
+                --instance-id "$EC2_INSTANCE_ID" \
+                --region "${{ env.AWS_REGION }}"
+
               exit 1
+
             fi
 
-            echo "Rollback completed successfully."
-
-            # Original deployment failed, therefore GitHub Actions must fail.
+            echo "Original deployment failed, but previous version was restored."
             exit 1
+
           fi
 
-          echo "======================================"
-          echo "DEPLOYMENT SUCCESSFUL"
-          echo "Health check passed."
-          echo "======================================"
+          # Show deployment result
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --region "${{ env.AWS_REGION }}"
+
+          echo "Deployment and health check successful!"
