@@ -75,6 +75,18 @@ resource "aws_iam_role_policy" "github_ecr" {
         Resource = "arn:aws:ecr:ap-south-1:840986437653:repository/react-devops"
       },
 
+
+      {
+        Sid    = "EC2Describe"
+        Effect = "Allow"
+
+        Action = [
+          "ec2:DescribeInstances"
+        ]
+
+        Resource = "*"
+      },
+
       {
         Sid    = "SSMDeploy"
         Effect = "Allow"
