@@ -11,7 +11,7 @@ resource "aws_security_group" "web" {
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   security_group_id = aws_security_group.web.id
 
-  cidr_ipv4   = "122.176.31.35/32"
+  cidr_ipv4   = "223.185.32.119/32"
   from_port   = 22
   to_port     = 22
   ip_protocol = "tcp"
